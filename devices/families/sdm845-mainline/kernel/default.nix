@@ -1,4 +1,5 @@
-{ mobile-nixos,
+{
+  mobile-nixos,
   fetchFromGitea,
   fetchpatch,
   stdenv,
@@ -10,7 +11,7 @@
   perl,
   python3,
   zstd, # To compress kernel modules
-  features ? [],
+  features ? [ ],
   ...
 }:
 
@@ -39,24 +40,24 @@ let
     ];
 
     buildPhase = ''
-            export ARCH=arm64
-            export KCONFIG_CONFIG=$PWD/.config
+      export ARCH=arm64
+      export KCONFIG_CONFIG=$PWD/.config
 
-            # Start with defconfig
-            make defconfig
+      # Start with defconfig
+      make defconfig
 
-            # Merge sdm845.config fragment if it exists
-            ./scripts/kconfig/merge_config.sh -m .config \
-              arch/arm64/configs/sdm845.config \
-              ${./defconfig}
+      # Merge sdm845.config fragment if it exists
+      ./scripts/kconfig/merge_config.sh -m .config \
+        arch/arm64/configs/sdm845.config \
+        ${./defconfig}
 
-            # Add essential NixOS required kernel options
-            cat >>.config <${./defconfig}
+      # Add essential NixOS required kernel options
+      cat >>.config <${./defconfig}
 
-            # Run olddefconfig to resolve dependencies
-            make olddefconfig
+      # Run olddefconfig to resolve dependencies
+      make olddefconfig
 
-            cp .config config
+      cp .config config
     '';
 
     installPhase = ''
@@ -67,12 +68,16 @@ in
 
 mobile-nixos.kernel-builder {
   version = "6.19.0-rc4-next-20260106-sdm845";
+  modDirVersion = "6.19.0-rc4-next-20260106-sdm845";
   configfile = configfile;
   src = kernelSrc;
 
   patches = [ ];
 
-  nativeBuildInputs = [ python3 zstd ];
+  nativeBuildInputs = [
+    python3
+    zstd
+  ];
 
   makeFlags = [ "dtbs" ];
 
