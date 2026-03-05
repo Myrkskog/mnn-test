@@ -91,4 +91,10 @@ mobile-nixos.kernel-builder {
 
   isModular = true;
   isCompressed = "gz";
+
+  # Patch Makefile to match modDirVersion
+  postUnpack = ''
+    substituteInPlace $sourceRoot/Makefile \
+      --replace 'EXTRAVERSION = -rc4-next-20260106' 'EXTRAVERSION = -rc4-next-20260106-sdm845'
+  '';
 }
