@@ -1,0 +1,318 @@
+{ config, pkgs, lib, modules, baseModules, ... }:
+
+let
+  enabled = config.mobile.system.type == "android";
+
+  inherit (lib) concatStringsSep optionalString types;
+  inherit (config.mobile.outputs) recovery stage-0;
+  inherit (config.mobile) device;
+  inherit (config.mobile.system.android) ab_partitions has_recovery_partition flashingMethod;
+  inherit (stage-0.mobile.boot.stage-1) kernel;
+
+  kernelPackage = kernel.package;
+
+  cmdline = concatStringsSep " " config.boot.kernelParams;
+
+  ubootPkg = config.mobile.system.android.u-boot.package;
+
+  android-bootimg = pkgs.callPackage ./bootimg.nix (rec {
+    inherit (config.mobile.system.android) bootimg;
+    inherit cmdline;
+    inherit (config.mobile.outputs) initrd;
+    name = "mobile-nixos_${device.name}_${bootimg.name}";
+    kernel = "${kernelPackage}/${kernelPackage.file}";
+  } // lib.optionalAttrs ubootEnabled {
+    uboot = if ubootEnabled then ubootPkg else null;
+  });
+
+  android-recovery = recovery.mobile.outputs.android.android-bootimg;
+
+  inherit (config.mobile.generatedFilesystems) rootfs;
+
+  # Note:
+  # The flash scripts, by design, are not using nix-provided paths for
+  # either of fastboot or the outputs.
+  # This is because this output should have no refs. A simple tarball of this
+  # output should be usable even on systems without Nix.
+  android-fastboot-images = pkgs.runCommand "android-fastboot-images-${device.name}" {
+    nativeBuildInputs = lib.optionals config.mobile.system.android.useSparseImage [ pkgs.android-tools ];
+  } ''
+    mkdir -p $out
+    ${if config.mobile.system.android.useSparseImage then ''
+    # Convert system.img to Android sparse format
+    echo "Converting system.img to Android sparse format..."
+    img2simg ${rootfs.imagePath} $out/system.img
+    '' else ''
+    cp -v ${rootfs.imagePath} $out/system.img
+    ''}
+    cp -v ${android-bootimg} $out/boot.img
+    ${optionalString has_recovery_partition ''
+    cp -v ${android-recovery} $out/recovery.img
+    ''}
+    cat > $out/flash-critical.sh <<'EOF'
+    #!/usr/bin/env bash
+    dir="$(cd "$(dirname "''${BASH_SOURCE[0]}")"; echo "$PWD")"
+    PS4=" $ "
+    ${if has_recovery_partition then ''
+    echo "NOTE: This script flashes the boot and recovery partitions only."
+    '' else ''
+    echo "NOTE: This script flashes the boot partition only."
+    ''}
+    (
+    set -x
+    ${if flashingMethod == "fastboot" then ''
+      fastboot flash ${optionalString ab_partitions "--slot=all"} boot "$dir"/boot.img
+      ${optionalString has_recovery_partition ''
+      fastboot flash ${optionalString ab_partitions "--slot=all"} recovery "$dir"/recovery.img
+      ''}
+    ''
+    else if flashingMethod == "odin" then ''
+      heimdall flash \
+        --BOOT "$dir"/boot.img ${optionalString has_recovery_partition ''\
+        --RECOVERY "$dir"/recovery.img
+      ''}
+    ''
+    else if flashingMethod == "lk2nd" then ''
+      echo "There is no automated script for flashing with lk2nd yet."
+      echo "Please refer to the installation instructions for your device."
+      exit 1
+    ''
+    else builtins.throw "No flashing method for ${flashingMethod}"})
+    echo ""
+    echo "Flashing completed."
+    echo "The system image needs to be flashed manually to the ${config.mobile.system.android.system_partition_destination} partition."
+    EOF
+    chmod +x $out/flash-critical.sh
+  '';
+
+  mkBootimgOption = name: lib.mkOption {
+    type = types.str;
+    internal = true;
+  };
+
+  ubootEnabled = config.mobile.system.android.u-boot.enable;
+in
+{
+  imports = [
+    ./flashable-zip.nix
+  ];
+
+  options = {
+    mobile.system.android = {
+      ab_partitions = lib.mkOption {
+        type = types.bool;
+        description = "Configures whether the device uses an A/B partition scheme";
+        default = false;
+        internal = true;
+      };
+
+      boot_as_recovery = lib.mkOption {
+        type = types.bool;
+        description = "Configures whether the device uses 'boot as recovery'";
+        default = config.mobile.system.android.ab_partitions;
+        internal = true;
+      };
+
+      device_name = lib.mkOption {
+        type = types.nullOr types.str;
+        description = "Value of `ro.product.device` or `ro.build.product`. Used to compare against in flashable zips.";
+        default = null;
+        internal = true;
+      };
+
+      flashingMethod = lib.mkOption {
+        type = types.enum [
+          "fastboot" # Default, using `fastboot`
+          "lk2nd"    # Some Qualcomm mainline devices, using fastboot and lk2nd
+          "odin"     # Mainly Samsung, using `heimdall`
+        ];
+        description = "Configures which flashing method is used by the device.";
+        default = "fastboot";
+        internal = true;
+      };
+
+      has_recovery_partition = lib.mkOption {
+        type = types.bool;
+        description = "Configures whether the device uses a distinct recovery partition";
+        default = !config.mobile.system.android.boot_as_recovery;
+        internal = true;
+      };
+
+      boot_partition_destination = lib.mkOption {
+        type = types.str;
+        description = "Partition label on which to install the boot image. Some OEM name the partition BOOT.";
+        default = "boot";
+        internal = true;
+      };
+
+      system_partition_destination = lib.mkOption {
+        type = types.str;
+        description = "Partition label on which to install the system image. E.g. change to `userdata` when it does not fit in the system partition.";
+        default = "system";
+        internal = true;
+      };
+
+      useSparseImage = lib.mkOption {
+        type = types.bool;
+        description = "Convert the system image to Android sparse format using img2simg. Required for some devices.";
+        default = false;
+        internal = true;
+      };
+
+      bootimg = {
+        name = lib.mkOption {
+          type = types.str;
+          description = "Suffix for the image name. Use it to distinguish speciality boot images.";
+          default = "boot.img";
+          internal = true;
+        };
+
+        dt = lib.mkOption {
+          type = types.nullOr types.path;
+          default = null;
+          description = "Path to a flattened device tree to pass as --dt to mkbootimg";
+          internal = true;
+        };
+
+        header_version = lib.mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Boot image header version (e.g., '0', '1', '2', '3', '4')";
+          internal = true;
+        };
+
+        os_version = lib.mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Operating system version";
+          internal = true;
+        };
+
+        os_patch_level = lib.mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "Operating system patch level";
+          internal = true;
+        };
+
+        dtb_offset = lib.mkOption {
+          type = types.nullOr types.str;
+          default = null;
+          description = "DTB offset address (used with header version 2+)";
+          internal = true;
+        };
+
+        dtb = lib.mkOption {
+          type = with types; nullOr (oneOf [path str (listOf (oneOf [path str]))]);
+          default = null;
+          description = ''
+            Device tree blob(s) to include in boot image.
+            - For header version 0/1: List of DTB files to append to kernel
+            - For header version 2+: Single DTB file path to include with --dtb flag
+          '';
+          internal = true;
+        };
+
+        flash = lib.attrsets.genAttrs [
+          "offset_base"
+          "offset_kernel"
+          "offset_second"
+          "offset_ramdisk"
+          "offset_tags"
+          "pagesize"
+        ] mkBootimgOption;
+      };
+
+      u-boot = {
+        enable = lib.mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable u-boot bootloader for Android devices.";
+        };
+
+        package = lib.mkOption {
+          type = types.package;
+          default = pkgs.tow-boot;
+          description = "The u-boot package to use.";
+        };
+      };
+    };
+    mobile = {
+      outputs = {
+        android = {
+          android-bootimg = lib.mkOption {
+            type = types.package;
+            description = ''
+              `boot.img` type image for Android-based systems.
+            '';
+            visible = false;
+          };
+          android-recovery = lib.mkOption {
+            type = types.package;
+            description = ''
+              `recovery.img` type image for Android-based systems.
+            '';
+            visible = false;
+          };
+          android-fastboot-images = lib.mkOption {
+            type = types.package;
+            description = ''
+              Flashing scripts and images for use with fastboot or odin.
+            '';
+            visible = false;
+          };
+        };
+      };
+    };
+  };
+
+  config = lib.mkMerge [
+    { mobile.system.types = [ "android" ]; }
+
+    (lib.mkIf enabled {
+      mobile.outputs = {
+        default = android-fastboot-images;
+        android = {
+          inherit
+            android-bootimg
+            android-recovery
+            android-fastboot-images
+          ;
+        };
+      };
+
+      mobile.HAL.boot.rebootModes = [
+        "Android.recovery"
+        "Android.bootloader"
+      ];
+
+      mobile.documentation.systemTypeFargment = ./. + "/device-notes.${flashingMethod}.adoc.erb";
+
+      assertions = [
+        {
+          assertion = config.mobile.system.android.bootimg.dtb == null || config.mobile.system.android.bootimg.dt == null;
+          message = ''
+            Device configuration erroneous: `mobile.android.bootimg.dtb` and legacy `bootimg.dt` enabled.
+              Tip: enabling `isQcdt` or `isExynosDT` on your kernel is not needed when using `bootimg.dtb`.
+          '';
+        }
+      ];
+    })
+
+    (lib.mkIf (kernelPackage != null && kernelPackage.isQcdt) {
+      mobile.system.android.bootimg.dt = "${kernelPackage}/dt.img";
+    })
+
+    (lib.mkIf (kernelPackage != null && kernelPackage.isExynosDT) {
+      mobile.system.android.bootimg.dt = "${kernelPackage}/dt.img";
+    })
+
+    {
+      mobile.boot.stage-1.bootConfig = {
+        device = {
+          inherit (config.mobile.system.android) boot_as_recovery;
+        };
+      };
+    }
+  ];
+}
