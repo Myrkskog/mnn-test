@@ -85,48 +85,47 @@ let
   };
 in
 
-(mobile-nixos.kernel-builder {
-  #version = "6.19.0-rc4-next-20260106-sdm845";
-  version = targetVersion;
-  #modDirVersion = "6.19.0-rc4-next-20260106-sdm845";
-  modDirVersion = targetVersion;
-  configfile = configfile;
-  src = kernelSrc;
+(mobile-nixos.kernel-builder (
+  args
+  // {
+    #version = "6.19.0-rc4-next-20260106-sdm845";
+    version = targetVersion;
+    #modDirVersion = "6.19.0-rc4-next-20260106-sdm845";
+    modDirVersion = targetVersion;
+    configfile = configfile;
+    src = kernelSrc;
 
-  patches = [ ];
+    patches = [ ];
 
-  nativeBuildInputs = [
-    python3
-    zstd
-  ];
+    nativeBuildInputs = [
+      python3
+      zstd
+    ];
 
-  makeFlags = [ "dtbs" ];
+    makeFlags = [ "dtbs" ];
 
-  # Don't use zinstall, it expects EFI boot files which ARM64 doesn't generate
-  installTargets = [ ];
+    # Don't use zinstall, it expects EFI boot files which ARM64 doesn't generate
+    installTargets = [ ];
 
-  postInstall = ''
-    echo ":: Installing Image.gz kernel"
-    cp -v "$buildRoot/arch/arm64/boot/Image.gz" "$out/Image.gz"
-  '';
+    isModular = true;
+    isCompressed = "gz";
 
-  isModular = true;
-  isCompressed = "gz";
+    postInstall = ''
+      echo ":: Installing Image.gz kernel"
+      cp -v "$buildRoot/arch/arm64/boot/Image.gz" "$out/Image.gz"
+    '';
 
-  # Match the EXTRAVERSION in Makefile to our target modDirVersion
-  # Overwrite the DTB Makefile as requested
-  postUnpack = ''
-    substituteInPlace $sourceRoot/Makefile \
-      --replace 'EXTRAVERSION = ${kernelVersion.extraversion}' 'EXTRAVERSION = ${kernelVersion.extraversion}-sdm845'
-    cp ${./arch-arm64-boot-dts-sdm845-Makefile} $sourceRoot/arch/arm64/boot/dts/qcom/Makefile
-  '';
-
+    # Match the EXTRAVERSION in Makefile to our target modDirVersion
+    # Overwrite the DTB Makefile as requested
+    postUnpack = ''
+      substituteInPlace $sourceRoot/Makefile \
+        --replace 'EXTRAVERSION = ${kernelVersion.extraversion}' 'EXTRAVERSION = ${kernelVersion.extraversion}-sdm845'
+      cp ${./arch-arm64-boot-dts-sdm845-Makefile} $sourceRoot/arch/arm64/boot/dts/qcom/Makefile
+    '';
+    NIX_CFLAGS_COMPILE = "-Wno-error=return-type -Wno-error=implicit-function-declaration -Wno-error=int-conversion";
+  }
   # Add the compiler flags
-}).overrideAttrs
+)).overrideAttrs
   (old: {
-
-    NIX_CFLAGS_COMPILE =
-      (old.NIX_CFLAGS_COMPILE or "")
-      + " -Wno-error=return-type -Wno-error=implicit-function-declaration -Wno-error=int-conversion";
-
+    NIX_CFLAGS_COMPILE = (old.NIX_CFLAGS_COMPILE or "") + " " + (args.NIX_CFLAGS_COMPILE or "");
   })
