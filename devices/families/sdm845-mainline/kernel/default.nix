@@ -41,7 +41,8 @@ let
 
   # Target version string with suffix
 
-  targetVersion = "${kernelVersion.string}-sdm845";
+  #targetVersion = "${kernelVersion.string}-sdm845";
+  targetVersion = "${kernelVersion.string}";
 
   configfile = stdenv.mkDerivation {
     name = "sdm845-kernel-config";
