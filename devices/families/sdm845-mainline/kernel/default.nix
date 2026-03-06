@@ -89,8 +89,8 @@ in
 (mobile-nixos.kernel-builder {
   #version = "6.19.0-rc4-next-20260106-sdm845";
   version = targetVersion;
-  #modDirVersion = "6.19.0-rc4-next-20260106-sdm845";
-  modDirVersion = targetVersion;
+  modDirVersion = "6.19.0-rc4-next-20260106-sdm845";
+  #modDirVersion = targetVersion;
   configfile = configfile;
   src = kernelSrc;
 
@@ -117,12 +117,13 @@ in
   # Match the EXTRAVERSION in Makefile to our target modDirVersion
   # Overwrite the DTB Makefile as requested
   postUnpack = ''
-    substituteInPlace $sourceRoot/Makefile \
-      --replace 'EXTRAVERSION = ${kernelVersion.extraversion}' 'EXTRAVERSION = ${kernelVersion.extraversion}-sdm845'
     cp ${./arch-arm64-boot-dts-sdm845-Makefile} $sourceRoot/arch/arm64/boot/dts/qcom/Makefile
   '';
   NIX_CFLAGS_COMPILE = "-Wno-error=return-type -Wno-error=implicit-function-declaration -Wno-error=int-conversion";
 }
+  #MOVED THIS GARBAGE OUT
+  #substituteInPlace $sourceRoot/Makefile \
+  #  --replace 'EXTRAVERSION = ${kernelVersion.extraversion}' 'EXTRAVERSION = ${kernelVersion.extraversion}-sdm845'
   # Add the compiler flags
 ).overrideAttrs
   (old: {
