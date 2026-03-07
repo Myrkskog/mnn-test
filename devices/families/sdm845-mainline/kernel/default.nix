@@ -34,6 +34,12 @@ let
     sublevel = lib.head (builtins.match ".+SUBLEVEL = ([0-9]+).+" (builtins.readFile file));
     extraversion = lib.head (builtins.match ".+EXTRAVERSION = ([a-z0-9-]+).+" (builtins.readFile file));
 
+# Trace statements to debug the parsed values
+  _ = builtins.trace ("Parsed version: ${version}") null;
+  _ = builtins.trace ("Parsed patchlevel: ${patchlevel}") null;
+  _ = builtins.trace ("Parsed sublevel: ${sublevel}") null;
+  _ = builtins.trace ("Parsed extraversion: ${extraversion}") null;
+
     string = "${version}.${patchlevel}.${sublevel}${
       lib.optionalString (extraversion != "") extraversion
     }";
@@ -43,6 +49,8 @@ let
 
   #targetVersion = "${kernelVersion.string}-sdm845";
   targetVersion = "${kernelVersion.string}";
+
+  _ = builtins.trace ("Target version: ${targetVersion}") null;
 
   configfile = stdenv.mkDerivation {
     name = "sdm845-kernel-config";
@@ -60,36 +68,41 @@ let
     ];
 
     buildPhase = ''
-      export ARCH=arm64
-      export KCONFIG_CONFIG=$PWD/.config
+  export ARCH=arm64
+  export KCONFIG_CONFIG=$PWD/.config
 
-      # Start with defconfig
-      make defconfig
+  # Debugging output
+  echo "Starting build with ARCH=${ARCH} and KCONFIG=${KCONFIG_CONFIG}"
 
-      # Merge sdm845.config fragment if it exists
-      ./scripts/kconfig/merge_config.sh -m .config \
-        arch/arm64/configs/sdm845.config \
-        ${./defconfig}
+  make defconfig
+  echo "Defconfig created."
 
-      # Add essential NixOS required kernel options
-      cat >>.config <${./defconfig}
+  # Merge sdm845.config fragment if it exists
+  ./scripts/kconfig/merge_config.sh -m .config \
+    arch/arm64/configs/sdm845.config \
+    ${./defconfig}
 
-      # Run olddefconfig to resolve dependencies
-      make olddefconfig
+  echo "Merged config."
 
-      cp .config config
-    '';
+  # Add essential NixOS required kernel options
+  cat >>.config <${./defconfig}
 
-    installPhase = ''
-      cp config $out
-    '';
+  # Debugging output for the config file
+  echo "Final config: $(cat .config)"
+
+  make olddefconfig
+  echo "Resolved dependencies."
+
+  cp .config config
+'';
   };
 in
 
 (mobile-nixos.kernel-builder {
   #version = "6.19.0-rc4-next-20260106-sdm845";
   version = targetVersion;
-  modDirVersion = "6.19.0-rc4-next-20260106-sdm845";
+  modDirVersion = "${kernelVersion.string}";
+_ = builtins.trace ("modDirVersion: ${modDirVersion}") null;
   #modDirVersion = targetVersion;
   configfile = configfile;
   src = kernelSrc;
